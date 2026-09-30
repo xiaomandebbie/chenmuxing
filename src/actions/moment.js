@@ -1,4 +1,4 @@
-// 发一条动态（替代原来的日记）。
+// 发一条动态。
 // 正文必填；image_prompt 选填，配了生图就真的生成一张图；voice_text 选填，配了 ElevenLabs 就生成语音。
 // 两条动态之间至少隔 MOMENT_MIN_INTERVAL_HOURS 小时（默认 6）。逛论坛、翻记忆这类行为记录不算。
 import fs from 'fs';
@@ -16,6 +16,9 @@ const IMAGE_MODEL = (process.env.IMAGE_MODEL || '').trim();
 const IMAGE_API_FORMAT = (process.env.IMAGE_API_FORMAT || 'openai').trim().toLowerCase();
 const IMAGE_SIZE = (process.env.IMAGE_SIZE || '1024x1024').trim();
 const IMAGE_TIMEOUT_MS = Number(process.env.IMAGE_TIMEOUT_MS) || 180000;
+
+// ElevenLabs 模型。不填是 eleven_v3（认 [breathing] / [whispers] 这类标签）。换模型只改 .env，不用动代码
+const ELEVENLABS_MODEL = (process.env.ELEVENLABS_MODEL || '').trim() || 'eleven_v3';
 
 export const isImageEnabled = () => Boolean(IMAGE_API_URL && IMAGE_API_KEY && IMAGE_MODEL);
 export const isVoiceEnabled = () =>
@@ -95,18 +98,18 @@ async function generateImage(prompt) {
   }
 }
 
-// ElevenLabs 文字转语音。模型固定 eleven_v3：只有它认 [breathing] / [whispers] 这类标签。
+// ElevenLabs 文字转语音。模型见 ELEVENLABS_MODEL。
 async function generateAudio(text) {
   if (!text || !isVoiceEnabled()) return null;
   try {
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`, {
       method: 'POST',
       headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ text, model_id: 'eleven_v3' }),
+      body: JSON.stringify({ text, model_id: ELEVENLABS_MODEL }),
       signal: AbortSignal.timeout(120000),
     });
     if (!res.ok) {
-      console.error('moment: ElevenLabs error', res.status, (await res.text()).slice(0, 300));
+      console.error(`moment: ElevenLabs error（模型 ${ELEVENLABS_MODEL}）`, res.status, (await res.text()).slice(0, 300));
       return null;
     }
     fs.mkdirSync(AUDIO_DIR, { recursive: true });
