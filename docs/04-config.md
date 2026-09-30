@@ -49,24 +49,33 @@ pm2 logs phosphor --lines 300 --nostream | grep 缓存命中
 
 ## 对话记录清理
 
+网关把每条聊天追加进 `conversation_log`，只增不删。phosphor 隔一段时间清一次旧的。
+
 | 变量 | 说明 |
 |---|---|
-| `CONVERSATION_KEEP_HOURS` | 保留最近多少小时的对话记录。**不填 = 24**，填 0 = 不清理 |
-| `CONVERSATION_KEEP_MIN` | 不管多旧，最新多少条总是留着。**不填 = 30** |
+| `CONVERSATION_LOG_CLEAN_HOURS` | 多久清一次，同时也是清掉多久以前的（小时）。**不填 = 24**，填 `0` 不清理 |
+| `CONVERSATION_LOG_KEEP` | 清理时最新多少条无论多旧都留着。**不填 = 30**；比 `DECIDE_CONTEXT_LIMIT` 小时按 `DECIDE_CONTEXT_LIMIT` 算 |
 
-phosphor 每 24 小时清理一次 `conversation_log`，上次清理的时间记在数据库的 `meta` 表里，重启不会让它提前或重复清。进程第一次跑到这个版本时会马上清一次。
+> 旧变量名 `CONVERSATION_KEEP_HOURS`、`CONVERSATION_KEEP_MIN` 仍然兼容，已经配好的不用改。
 
-为什么最少留 30 条：做决定用最近 12 条，heartbeat 共享上下文最多 30 条，Drivesoid 分类用最近 10 条。聊得少的时候最近几条可能都在一天以前，只按时间删会把它们全删掉。
+怎么工作：
 
-清完会调一次 Ombre Brain 的 `breath` 回忆一下（只读记忆库，不调模型），然后在动态页记一张黄卡，点开能看到清了多少条、想起了什么。没接 Ombre Brain 就只清理不回忆；这次什么都没清、也没想起什么，就不记黄卡。
+- 上次清理的时间记在数据库 `meta` 表里，**重启不会重新计时，也不会重复清**。全新部署第一次启动只记下时间，过了 24 小时才第一次清
+- 为什么最少留 30 条：做决定用最近 12 条，heartbeat 共享上下文最多 30 条，Drivesoid 分类用最近 10 条。聊得少的时候最近几条可能都在一天以前，只按时间删会把它们全删掉
+- **真删掉了东西，TA 会马上醒一次**（`wake_log` 里 `kind = after_cleanup`）。这一轮照常翻 breath / feel，提示里会告诉 TA 旧聊天刚清掉，想留住的可以自己 hold 进长期记忆。一天多一次模型调用。一条都没删、或者 `silent` 模式下不醒
+- 这一次不改自然唤醒的排期，和精确唤醒一样是额外的一次
+
+> ⚠️ **删掉的原文找不回来**，也不会自动存进 Ombre Brain。只有 TA 自己 hold 过的才留在长期记忆里。想留底的话，先备份 `data/state.db`。清理只动 `conversation_log`，动态、留言、唤醒记录都不受影响。
+
+确认开了没有：
 
 ```bash
-pm2 logs phosphor --lines 300 --nostream | grep cleanup
-# cleanup: 清掉了 N 条 24 小时以前的对话记录（最新 30 条始终保留）
-# cleanup: 清理完回忆了一下（breath）
-```
+pm2 logs phosphor --lines 20 --nostream | grep 对话记录清理
+# 对话记录清理：每 24 小时，保留最新 30 条
 
-> 清理只动 `conversation_log`。动态、留言、唤醒记录、长期记忆都不受影响。
+pm2 logs phosphor --lines 2000 --nostream | grep 清理对话记录
+# phosphor: 清理对话记录，删掉 N 条 24 小时以前的（最新 30 条保留）
+```
 
 ## 唤醒节律
 

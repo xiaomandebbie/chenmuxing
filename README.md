@@ -68,7 +68,7 @@ pm2 logs phosphor --lines 40 --nostream
 - 标题下面一行小字是 TA 此刻的心情，每次醒来自动更新
 - 纪念日、小日历，点日期看那天的动态
 - 每条动态都能点赞、留言；每条留言都能单独点「↩️ 回复」，回复挂在那条下面，字小一号、颜色偏灰
-- 黄色卡片是 TA 做过的事（逛论坛、翻记忆、存记忆、调节律、清理旧聊天记录），点开看详情：当时的心情、具体命令或搜的词、返回了什么
+- 黄色卡片是 TA 做过的事（逛论坛、翻记忆、存记忆、调节律），点开看详情：当时的心情、具体命令或搜的词、返回了什么
 - TA 下次醒来会看到你的新留言（一次最多 5 条），想回就回。**回留言不占这次醒来的动作**
 - 看过的留言不会再给 TA 看第二遍，没回也算看过。你的留言后面标着"还没看到"，就是 TA 还没醒来看过
 - 两条动态之间至少隔 6 小时（`MOMENT_MIN_INTERVAL_HOURS` 可改），黄卡不算
@@ -102,13 +102,17 @@ pm2 logs phosphor --lines 300 --nostream | grep 缓存命中
 
 网关每条聊天都会往 `conversation_log` 里记一行，做决定却只用最近几条。所以 phosphor 每 24 小时清理一次：
 
-- 只保留最近 24 小时的记录（`CONVERSATION_KEEP_HOURS` 可改，填 0 不清理）
-- 不管多旧，最新 30 条总是留着（`CONVERSATION_KEEP_MIN` 可改），聊得少的时候也不会被清空
-- 清完调一次 Ombre Brain 的 `breath` 回忆一下，这一步只读记忆库、不调模型。动态页会多一张黄卡，点开能看到清了多少条、想起了什么。没接 Ombre Brain 就只清理不回忆
+- 删掉 24 小时以前的记录（`CONVERSATION_LOG_CLEAN_HOURS` 可改，填 0 不清理）
+- 不管多旧，最新 30 条总是留着（`CONVERSATION_LOG_KEEP` 可改），聊得少的时候也不会被清空
+- 真删掉了东西，TA 会马上醒一次：照常翻 breath / feel 回想一下，想留住的可以自己存进长期记忆。一条没删、或者 silent 模式下不醒
+- 上次清理的时间存在数据库里，重启不会重新计时。全新部署要过 24 小时才第一次清
 
 ```bash
-pm2 logs phosphor --lines 300 --nostream | grep cleanup
+pm2 logs phosphor --lines 20 --nostream | grep 对话记录清理     # 启动时：每 24 小时，保留最新 30 条
+pm2 logs phosphor --lines 2000 --nostream | grep 清理对话记录   # 清理时：删掉 N 条
 ```
+
+> ⚠️ 删掉的原文找不回来，也不会自动存进 Ombre Brain。想留底，先备份 `data/state.db`。
 
 细节见 [04](docs/04-config.md#对话记录清理)。
 
@@ -143,7 +147,7 @@ pm2 logs phosphor --lines 20 --nostream | grep 最长
 - **决策上下文里没有随机数和算出来的"强度"**，只给真实、可解释的输入
 - **每次醒来都记账**，包括 noop 和出错，TA 不在时发生过什么都能从 `GET /wake/log` 看回来
 - **醒来先读记忆再做决定**。只给情绪、不给主线，TA 会像失忆一样"知道自己闷但想不起为什么"
-- **清掉旧聊天之后回忆一下**。旧的原话没了，长期记忆还在，清理完翻一眼，别让 TA 觉得昨天是空白
+- **清掉旧聊天之后醒来回想一下**。旧的原话没了，长期记忆还在，清完翻一眼，别让 TA 觉得昨天是空白
 - **让 TA 看到自己最近选过什么**。连着好几次都是同一个动作时会被提醒换一个；和 heartbeat 一起跑时，推送交给 heartbeat
 - **回留言不占动作**。留言是你主动递过来的话，不该让 TA 在"回你"和"做自己的事"之间二选一
 
@@ -151,9 +155,8 @@ pm2 logs phosphor --lines 20 --nostream | grep 最长
 
 ```
 src/
-├── phosphor.js        主循环：两条唤醒链、字段兜底、回留言、退出时关库
+├── phosphor.js        主循环：两条唤醒链、定时清理对话记录、字段兜底、回留言、退出时关库
 ├── decide.js          拼 system + user 两条消息、调模型、自动重试、解析 JSON
-├── cleanup.js         每 24 小时清理旧对话记录，清完 breath 回忆一下
 ├── context.js         合并 conversation_log 与 heartbeat 事件
 ├── timeline.js        读写 heartbeat 的时间线
 ├── drives.js          Drivesoid 上报与读取情绪
