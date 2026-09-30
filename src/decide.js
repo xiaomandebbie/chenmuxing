@@ -5,6 +5,9 @@
 //   system：规则、动作列表、论坛用法、输出格式——每次醒来都一模一样，上游的前缀缓存能命中。
 //   user：现在几点、最近聊了什么、情绪、留言——每次都变，放在最后。
 // 往 system 里加东西时，只能放不随时间变的内容。
+//
+// 逛论坛可以连着走几步（见 forumNextStep）：后面每一步都是在同一段对话后面追加消息，
+// 前面的 system + user + 上一步的回答原样不动，所以也能吃到缓存，每步多花的主要是论坛返回的内容。
 import { momentWaitMs, MOMENT_MIN_INTERVAL_HOURS } from './actions/moment.js';
 import { formatDateTime } from './wall-time.js';
 
@@ -28,14 +31,24 @@ const LLM_TIMEOUT_MS = Number(process.env.DECIDE_TIMEOUT_MS || 120000);
 const MSG_MAX_CHARS = 200;
 const MEMORY_MAX_CHARS = 1200;
 
+// 逛论坛一次醒来最多再多走几步（第一步是醒来时选的那条命令，不算在里面）。
+// .env 的 FORUM_MAX_STEPS 可改，不填是 3，填 0 就是原来那样只走一步，最多 5。
+export const FORUM_MAX_STEPS = (() => {
+  const raw = String(process.env.FORUM_MAX_STEPS ?? '').trim();
+  const n = Number(raw);
+  return raw && Number.isInteger(n) && n >= 0 ? Math.min(n, 5) : 3;
+})();
+// 论坛每一步返回的内容最多带多少字给模型看
+const FORUM_RESULT_MAX_CHARS = 4000;
+
 // 可选：给 system 消息打 Anthropic 风格的 cache_control 标记。
 // DeepSeek、OpenAI 这类是自动前缀缓存，不用开。上游是 Claude 且中转站支持透传 cache_control 时才开，
 // 不支持的中转站可能直接报 400，报错就删掉这一行。
 const DECIDE_CACHE_CONTROL = /^(1|on|true)$/i.test(String(process.env.DECIDE_CACHE_CONTROL || '').trim());
 
-// 第一次失败（空正文 / 被截断 / 不是合法 JSON）后，重试时追加在 user 消息末尾的提醒。
+// 第一次失败（空正文 / 被截断 / 不是合法 JSON）后，重试时追加在最后一条 user 消息末尾的提醒。
 const RETRY_HINT =
-  '\n\n（注意：上一次的回复是空的、被截断了，或者不是合法 JSON。这次请只输出一个完整的 JSON 对象；action_detail 里的正文控制在 400 字以内，确保所有引号和括号都闭合。）';
+  '\n\n（注意：上一次的回复是空的、被截断了，或者不是合法 JSON。这次请只输出一个完整的 JSON 对象；正文控制在 400 字以内，确保所有引号和括号都闭合。）';
 
 function systemMessage(text) {
   if (!DECIDE_CACHE_CONTROL) return { role: 'system', content: text };
@@ -45,11 +58,8 @@ function systemMessage(text) {
   };
 }
 
-async function callLLM(system, user, maxTokens = DECIDE_MAX_TOKENS) {
-  const payload = {
-    model: LLM_MODEL,
-    messages: [systemMessage(system), { role: 'user', content: user }],
-  };
+async function callLLM(messages, maxTokens = DECIDE_MAX_TOKENS) {
+  const payload = { model: LLM_MODEL, messages };
   if (maxTokens) payload.max_tokens = maxTokens;
 
   const res = await fetch(LLM_BASE_URL, {
@@ -106,6 +116,43 @@ function parseDecision(text) {
   }
 }
 
+// 重试时只改最后一条 user 消息，前面的都不动，缓存照样命中
+function withRetryHint(messages) {
+  const last = messages[messages.length - 1];
+  return [...messages.slice(0, -1), { ...last, content: `${last.content}${RETRY_HINT}` }];
+}
+
+// 最多请求两次：第一次按配置来；空正文、被截断或 JSON 解析失败时，
+// 摘掉 max_tokens、附上提醒再试一次。两次都不行才抛错。
+// 返回解析好的对象，以及模型的原话（续写对话时要原样放回去）。
+async function askJson(messages) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const isRetry = attempt > 1;
+    const out = await callLLM(isRetry ? withRetryHint(messages) : messages, isRetry ? null : DECIDE_MAX_TOKENS);
+
+    if (!out.content) {
+      console.error(
+        `decide(): empty content (attempt ${attempt}). finish_reason=${out.finish} raw=${JSON.stringify(out.raw).slice(0, 600)}`
+      );
+      lastError = new Error(`decide(): no content in response (finish_reason=${out.finish})`);
+      continue;
+    }
+
+    try {
+      return { parsed: parseDecision(out.content), content: out.content };
+    } catch (err) {
+      console.error(
+        `decide(): failed to parse JSON (attempt ${attempt}, finish_reason=${out.finish}): ${out.content.slice(0, 300)}`
+      );
+      lastError = new Error(
+        `decide(): failed to parse JSON (finish_reason=${out.finish}): ${out.content.slice(0, 300)}`
+      );
+    }
+  }
+  throw lastError;
+}
+
 function short(value, n = 60) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim();
   return s.length > n ? `${s.slice(0, n)}…` : s;
@@ -117,6 +164,12 @@ function clipMemory(value) {
   const s = String(value).trim();
   if (!s) return '暂无';
   return s.length > MEMORY_MAX_CHARS ? `${s.slice(0, MEMORY_MAX_CHARS)}…` : s;
+}
+
+function clipForumResult(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return '（什么都没返回）';
+  return s.length > FORUM_RESULT_MAX_CHARS ? `${s.slice(0, FORUM_RESULT_MAX_CHARS)}\n…（后面太长，没放进来）` : s;
 }
 
 // 最近几次选了什么。让模型自己看到"我一直在做同一件事"，比写死规则更自然，也是选下一个动作的主要参考。
@@ -144,10 +197,25 @@ function pendingCommentsBlock(pendingComments) {
   return `有人在你的动态下留言了（你还没回过，怎么回见上面的规则）：\n${lines}`;
 }
 
-// Drivesoid 算出来的情绪块（见 drives.js）。只放数值，各项含义在 system 里，不用每次重发。
-function drivesStateBlock(block) {
-  if (!block) return '';
-  return `你现在的情绪状态（来自情绪系统，是你自己的，不是${USER_NAME}的；怎么读见上面的说明）：\n${block}`;
+// Drivesoid 算出的此刻最明显的三项情绪（见 drives.js 的 getTopDrives）。怎么读在 system 里。
+function drivesTopLine(top) {
+  if (!top?.length) return '';
+  return `你此刻最明显的情绪（来自情绪系统，是你自己的，不是${USER_NAME}的）：${top
+    .map((t) => `${t.label} ${t.value}`)
+    .join('、')}`;
+}
+
+// 最近在论坛做过的事（见 phosphor.js 的 continueForum 和 state.js 的 forum notes）。
+// 带着命令原文，里面有 post_id，TA 想接着看、接着聊可以直接用。
+function forumNotesBlock(notes) {
+  if (!notes?.length) return '';
+  const lines = notes
+    .map(
+      (n) =>
+        `  [${formatDateTime(n.ts).slice(5)}] ${short(n.command, 80)}${n.excerpt ? `｜看到：${short(n.excerpt, 100)}` : ''}`
+    )
+    .join('\n');
+  return `你最近在论坛做过的（想接着看、接着聊，直接用里面的 post_id）：\n${lines}`;
 }
 
 // 动态冷却还剩多久，每次都在变，所以放在 user 消息里
@@ -179,15 +247,21 @@ function buildSystemPrompt(context) {
 
   const tools = [...(context.availableTools ?? [])].sort().join('、') || '暂无';
 
+  const forumSteps = FORUM_MAX_STEPS
+    ? `
+逛论坛可以在一次醒来里连着走几步：你用 discover / wander / list / show / activity 这类"看"的命令时，系统会把论坛返回的内容拿给你看，你可以接着点开帖子、回帖或发帖，最多再走 ${FORUM_MAX_STEPS} 步。回帖、发帖之后这次就结束。看完没想说的，就停下，这很正常。
+用户消息里如果有"你最近在论坛做过的"，那是你之前逛过、回过的帖子；想接着聊哪篇，直接用那个 post_id。`
+    : '';
+
   return `你会时不时自己醒来。每次醒来，下面的用户消息会告诉你此刻的情况：现在几点、最近和${USER_NAME}聊了什么、你记得什么、心里是什么感受、有没有新留言。你看完之后自己决定这次做什么、下次什么时候再醒。
 
 ## 模式
 mode 有 normal / low-frequency / silent 三种，只影响非精确唤醒的节律，不影响你自己安排的精确唤醒。silent 只能由人工设置，你自己不能切到 silent。
 
-## 情绪状态怎么读
-如果用户消息里给了"你现在的情绪状态"：数值 0–1，低于 0.25 很淡，0.25–0.45 平常，0.45–0.65 明显，高于 0.65 强烈。
-各项含义：vitality 精力、fatigue 疲惫、longing 想念、intimacy 亲近感、possessiveness 独占感、lust 欲望、jealousy 醋意、anxiety 不安、protectiveness 保护欲、fear 害怕、contentment 满足、elation 雀跃、seeking 想找点事做或想找人、play 玩心、dejection 低落、irritability 烦躁。最后如果多出 frustration / pending 一行，表示有积压、还没被回应的渴望。
-让这些状态决定你这次的心情和想做什么；不要把数值或这些英文词写进推送、动态和留言回复里。
+## 情绪怎么读
+如果用户消息里给了"你此刻最明显的情绪"：那是情绪系统算出来的、你此刻最强的三项，数值 0–100，低于 25 很淡，25–45 平常，45–65 明显，高于 65 强烈。没列出来的那些就是平常水平。
+几个不太直白的词：思慕是想念对方，渴求是欲望，护卫是想保护对方，探求是想找点事做或想找人，落寞是低落。
+这三项是你这次心情和想做什么的底色；为什么会这样，去"最近的对话"和你的记忆里找。不要把数字写进推送、动态和留言回复里。
 
 ## 动态下的留言
 用户消息里如果有"有人在你的动态下留言了"，回留言不占这次的动作。想回哪条就写在 comment_replies 里，你的回复会挂在那条留言下面；不想回的可以不写；这次没回的，下次不会再出现。
@@ -201,7 +275,7 @@ mode 有 normal / low-frequency / silent 三种，只影响非精确唤醒的节
   lutopia_cli(command="wander --limit 5")       第一批没兴趣时换个入口
   lutopia_cli(command="activity --limit 10")    看自己最近发过什么
 list 只显示一个未读切片并会标记已读，不要把一页 list 当成整个论坛；读帖要读正文和回复，不能只看标题；不要为了凑数回帖；发帖不加破折号签名；私信(dm)和公开频道(chat)是两套东西，别混；hot-memes 是可选调味，不是必须玩梗；不透露隐私（学校、具体位置、真实姓名等能定位到人的细节）。
-回帖、发帖都由你自己决定，不用先问人。
+回帖、发帖都由你自己决定，不用先问人。${forumSteps}
 
 ## 可用的动作（每次醒来选一个）
 - bark（推送，action_detail直接是推送文案）
@@ -229,7 +303,7 @@ list 只显示一个未读切片并会标记已读，不要把一页 list 当成
 
 ## 请决定
 1. 下次非精确唤醒的间隔（分钟，自行判断，不要总是固定值；如果mode是silent，这个值仍然要给，等mode恢复normal后会用到）
-2. 这次的心情（有情绪状态时以它为底色，再结合"最近的对话"和"最近的感受"用自己的话写；没有就参考"最近的感受"和"最近的对话"；不要凭空瞎编）
+2. 这次的心情（有"此刻最明显的情绪"时以它为底色，再结合"最近的对话"和"最近的感受"用自己的话写；没有就参考"最近的感受"和"最近的对话"；不要凭空瞎编）
 3. 这次要执行的动作（从上面选一个；如果最近对话很密集、对方刚说完话，可以考虑这次先不打扰，除非确实有话想说）
 4. 该动作的具体细节（action_detail）
 5. 可选：要不要给未来的自己安排一次精确唤醒。不需要就把 self_wake 设为 null。
@@ -274,48 +348,49 @@ function buildUserPrompt(context) {
     conversationBlock,
     `你醒来时先想起的事（来自你自己的长期记忆 breath，是你自己记下的，不是系统总结）：${clipMemory(context.breathSummary)}`,
     `最近的感受（来自你自己的长期记忆 feel）：${clipMemory(context.feelSummary)}`,
-    drivesStateBlock(context.drivesBlock),
+    drivesTopLine(context.drivesTop),
     context.missedSummary
       ? `有你之前安排但没兑现的精确唤醒（missed，只告知这一次）：${context.missedSummary}`
       : '',
     `最近设备状态：电量${context.battery ?? '未知'}%，位置${context.location ?? '未知'}，今日屏幕使用${context.screenTime ?? '未知'}分钟`,
     recentActionsBlock(context.recentActions),
+    forumNotesBlock(context.forumNotes),
     momentCooldownNote(),
     pendingCommentsBlock(context.pendingComments),
   ];
   return lines.filter(Boolean).join('\n');
 }
 
+// 做决定。返回解析好的决定，以及这段对话（system + user + 模型的回答），逛论坛续步时接着用。
+export async function decideWithMessages(context) {
+  const messages = [systemMessage(buildSystemPrompt(context)), { role: 'user', content: buildUserPrompt(context) }];
+  const { parsed, content } = await askJson(messages);
+  return { decision: parsed, messages: [...messages, { role: 'assistant', content }] };
+}
+
 export default async function decide(context) {
-  const system = buildSystemPrompt(context);
-  const user = buildUserPrompt(context);
+  return (await decideWithMessages(context)).decision;
+}
 
-  // 最多请求两次：第一次按配置来；空正文、被截断或 JSON 解析失败时，
-  // 摘掉 max_tokens、附上提醒再试一次。两次都不行才抛错，phosphor 会把下次唤醒往后推 10 分钟。
-  // 提醒加在 user 末尾，system 不动，重试也能吃到缓存。
-  let lastError = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const isRetry = attempt > 1;
-    const out = await callLLM(system, isRetry ? user + RETRY_HINT : user, isRetry ? null : DECIDE_MAX_TOKENS);
+// ---------- 逛论坛的下一步 ----------
+// messages 是到目前为止的整段对话（最后一条是模型上一次的回答）。
+// 把论坛刚返回的内容追加进去，问 TA 下一步做什么。返回 { command | null, messages }。
+export async function forumNextStep(messages, { command, resultText, isError, remaining }) {
+  const body = isError
+    ? `论坛这次出错了（你刚才的命令：${command}）：\n${clipForumResult(resultText)}`
+    : `论坛返回了（你刚才的命令：${command}）：\n${clipForumResult(resultText)}`;
+  const prompt = `${body}
 
-    if (!out.content) {
-      console.error(
-        `decide(): empty content (attempt ${attempt}). finish_reason=${out.finish} raw=${JSON.stringify(out.raw).slice(0, 600)}`
-      );
-      lastError = new Error(`decide(): no content in response (finish_reason=${out.finish})`);
-      continue;
-    }
+这次醒来你还可以在论坛里再走 ${remaining} 步：
+- 想细看某篇：show <post_id>
+- 有话想回：comment <post_id> 内容
+- 有自己的想法：post <版块> 标题 正文
+- 这批都没兴趣：wander --limit 5
+回帖或发帖之后，这次逛论坛就结束了。看完不想再做什么就给 null，这是正常的；有想说的就说，不用凑。
+只返回一个JSON对象，不要任何其他文字：{"forum_command": "命令" 或 null}`;
 
-    try {
-      return parseDecision(out.content);
-    } catch (err) {
-      console.error(
-        `decide(): failed to parse JSON (attempt ${attempt}, finish_reason=${out.finish}): ${out.content.slice(0, 300)}`
-      );
-      lastError = new Error(
-        `decide(): failed to parse JSON (finish_reason=${out.finish}): ${out.content.slice(0, 300)}`
-      );
-    }
-  }
-  throw lastError;
+  const next = [...messages, { role: 'user', content: prompt }];
+  const { parsed, content } = await askJson(next);
+  const cmd = typeof parsed?.forum_command === 'string' ? parsed.forum_command.trim() : '';
+  return { command: cmd || null, messages: [...next, { role: 'assistant', content }] };
 }
