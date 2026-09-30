@@ -107,6 +107,7 @@ export async function callTool(serverName, toolName, args) {
 
 // phosphor 启动时调用一次，把用到的 MCP 都连上。
 // 没配或连不上的只打一行警告，不会让整个进程崩掉。
+// 连上的 MCP，TA 醒来时都可以自己决定用。
 export async function connectAll() {
   // Ombre Brain（https://github.com/P0luz/Ombre-Brain）：长期记忆，Streamable HTTP。
   // OMBRE_BRAIN_URL 形如 http://localhost:18001/mcp，要求鉴权时再填 OMBRE_MCP_TOKEN。
@@ -122,7 +123,7 @@ export async function connectAll() {
     }
   }
 
-  // 论坛：个人 MCP URL，Streamable HTTP。
+  // 论坛：个人 MCP URL，Streamable HTTP。TA 可以自己逛、回帖、发帖。
   // 个人连接不需要传 token，身份由 URL 里的短码自动绑定。
   // 如果配的是 .../sse 结尾的旧格式，自动去掉这个后缀。
   // 名字保持 lutopia：decide.js 的 prompt 里就是用这个名字指挥工具调用的，改名两边会打架。
@@ -135,8 +136,4 @@ export async function connectAll() {
       console.error('could not connect MCP "lutopia":', err.message);
     }
   }
-
-  // 会对外说话的社交平台：故意不在这里自动连接。
-  // 发文前必须先跟人商量内容，不应该是"醒来后自己决定要做的事"，
-  // 所以不放进 TA 的自主行动工具列表。
 }

@@ -98,7 +98,7 @@ phosphor 每 **60 秒** 执行一次 `tick()`，每次检查两条互不干扰�
 |---|---|---|
 | `bark` | 给你手机推送一条通知 | `BARK_KEY` |
 | `moment` | 发一条动态，可选配图、配音。两条之间至少隔 6 小时 | 配图要 `IMAGE_*`；配音要 `ELEVENLABS_*` |
-| `mcp_call` | 调任意已连接的 MCP 工具（比如逛论坛） | 对应 MCP 已连上 |
+| `mcp_call` | 调任意已连接的 MCP 工具（比如逛论坛、回帖、发帖） | 对应 MCP 已连上 |
 | `ombre_brain` | 读/写长期记忆 | `OMBRE_BRAIN_URL` |
 | `set_mode` | 自己切 normal / low-frequency | 无 |
 | `noop` | 什么都不做（合法结果，不是失败） | 无 |
@@ -108,7 +108,7 @@ phosphor 每 **60 秒** 执行一次 `tick()`，每次检查两条互不干扰�
 - **配图是真的生成**：调 `IMAGE_API_URL` 那个生图接口，图片下载到 `MEDIA_DIR/images/` 存在本地。没配的话 TA 会被告知"先别写 image_prompt"
 - **配音**固定用 ElevenLabs `eleven_v3` 模型。只有它认 `[breathing]`、`[whispers]` 这类标签
 - **silent 故意不给 TA 自己切**。那等于从对方的世界里消失，这个开关只留给人：`POST /wake/mode`
-- **会对外发帖发文的 MCP 故意不自动连接**（见 [07](07-mcp.md)）。发之前要先和人商量
+- **论坛 TA 可以自己逛、回帖、发帖**，不用先问人。连上的 MCP 都算 TA 能自己用的（见 [07](07-mcp.md)）
 
 ## 动态、留言、回复、点赞
 
