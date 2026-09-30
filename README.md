@@ -66,6 +66,7 @@ pm2 logs phosphor --lines 40 --nostream
 浏览器打开 `http://服务器IP:3001/moments`，用 `VESPER_BASIC_USER` / `VESPER_BASIC_PASS` 登录。
 
 - 标题下面一行是「TA此刻」：接了 Drivesoid 时显示此刻最明显的三项情绪，没接时显示 TA 上次醒来写下的心情。整行点进去是心绪页 `/drives`
+- 再下面一行白底黄框的小字是唤醒时间：上次唤醒、下次唤醒、自主唤醒（TA 自己约的、最近的那一次精确唤醒）。今天的只写几点几分；silent 模式下下次唤醒显示「暂停中」；自主唤醒悬停能看到 TA 当时留的话
 - 纪念日、小日历，点日期看那天的动态
 - TA 发的动态像朋友圈：左边头像，右边名字、时间、正文。能点赞、留言；每条留言都能单独点「↩️ 回复」，回复挂在那条下面
 - 配了语音的动态显示成淡粉色语音条，点一下播放，再点暂停
@@ -172,10 +173,12 @@ src/
 ├── phosphor.js        主循环：两条唤醒链、逛论坛续步、定时清理对话记录、字段兜底、回留言、退出时关库
 ├── decide.js          拼 system + user 两条消息、调模型、自动重试、解析 JSON、论坛下一步
 ├── context.js         合并 conversation_log 与 heartbeat 事件
+├── text.js            按完整字符截断文本，发给模型前清掉半个 emoji（不然上游解析 JSON 报 400）
 ├── timeline.js        读写 heartbeat 的时间线
 ├── drives.js          Drivesoid 上报、最明显的三项情绪、心绪页用的完整状态
 ├── drives-page.js     心绪页 /drives
 ├── state.js           SQLite 读写；启动时自动建 data/、搬旧日记；论坛笔记
+├── wake-info.js       动态页用的上次 / 下次 / 自主唤醒时间
 ├── moments-store.js   纪念日、点赞、动作卡片详情、头像和名字
 ├── moments-page.js    动态页 /moments、头像和名字设置页、留言、回复、点赞接口
 ├── wall-time.js       按 TIME_ZONE 处理日期时间
