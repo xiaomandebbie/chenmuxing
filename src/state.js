@@ -296,6 +296,30 @@ export function pruneConversationLog(cutoffTs, keepMin = 0) {
   ).run(cutoffTs, keep).changes;
 }
 
+// 定时清理（phosphor.js 的 cleanupTick 每分钟问一次）。
+// 上次清理的时间记在 meta 表里，进程重启不会重复清，也不会因为重启把计时清零。
+// 用 IMMEDIATE 事务先拿写锁再判断到没到时间，和旧日记迁移同一个做法。
+// 第一次运行（meta 里还没有记录）只记下现在的时间，从这一刻开始算，不立刻清。
+// 旧版本记在 conversation_pruned_at 的时间照样认，升级上来不会重新计时。
+const CONVERSATION_CLEANED_KEY = 'conversation_log_cleaned_at';
+const LEGACY_CLEANED_KEY = 'conversation_pruned_at';
+const pruneConversationLogTx = db.transaction(({ intervalMs, maxAgeMs, keep, now }) => {
+  const last = Number(getMeta(CONVERSATION_CLEANED_KEY) ?? getMeta(LEGACY_CLEANED_KEY));
+  if (!Number.isFinite(last) || last <= 0) {
+    setMeta(CONVERSATION_CLEANED_KEY, now);
+    return null;
+  }
+  if (now - last < intervalMs) return null;
+  const deleted = pruneConversationLog(now - maxAgeMs, keep);
+  setMeta(CONVERSATION_CLEANED_KEY, now);
+  return deleted;
+});
+
+// 到时间了就清理，返回删了几条（可能是 0）；还没到时间返回 null。
+export function pruneConversationLogIfDue({ intervalMs, maxAgeMs, keep }) {
+  return pruneConversationLogTx.immediate({ intervalMs, maxAgeMs, keep, now: Date.now() });
+}
+
 // 关库。重复调用安全：已关就跳过。
 export function closeDb() {
   if (db.open) {
