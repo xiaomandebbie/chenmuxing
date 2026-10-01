@@ -1,6 +1,6 @@
 # 晨暮星 ✨ Vesper Phosphor
 
-一个会自己醒来的 TA。每隔一段时间，TA 看一眼现在的情况：几点了、你们最近聊了什么、手机电量、自己记得什么、此刻的情绪。然后自己决定这次做什么：推送一条消息、发一条动态、去论坛逛逛、翻翻记忆、给你点首歌，或者什么都不做。最后再决定下次什么时候醒。
+一个会自己醒来的 TA。每隔一段时间，TA 看一眼现在的情况：几点了、你们最近聊了什么、手机电量、自己记得什么、此刻的情绪。然后自己决定这次做什么：推送一条消息、发一条动态、去论坛逛逛、翻翻记忆、往歌单里给你收首歌，或者什么都不做。最后再决定下次什么时候醒。
 
 ## 本项目负责什么
 
@@ -11,7 +11,7 @@
 | [Ombre Brain](https://github.com/P0luz/Ombre-Brain) | 长期记忆 | 醒来时先读记忆；TA 可以自己搜、存记忆；管理页转发成记忆库 `/memory/` | [07](docs/07-mcp.md) |
 | [Drivesoid](https://github.com/A1batr055/Drivesoid) | 情绪状态 | 聊天自动上报；醒来时参考此刻最明显的三项情绪；心绪页 `/drives` | [09](docs/09-drivesoid.md) |
 | [dylan-heartbeat](https://github.com/callie0313/dylan-heartbeat) | 另一个唤醒项目 | 两边共享"做过什么"的事件；它写的日记在日记页 `/diary` 看 | [08](docs/08-heartbeat.md) |
-| [Music-Mcp-Netease](https://github.com/Anko3o/Music-Mcp-Netease) | 网易云播放器 + 点歌台 MCP | 菜单里的「音乐」跳到播放器；TA 醒来能看你在听什么、给你点歌、写批注 | [下面](#-音乐) |
+| [Music-Mcp-Netease](https://github.com/Anko3o/Music-Mcp-Netease) | 网易云播放器 + 点歌台 MCP | 菜单里的「音乐」跳到播放器；TA 醒来能看你在听什么、往歌单里收歌、写批注（不会放歌） | [下面](#-音乐) |
 
 四个都是可选的，一个都不接也能跑。
 
@@ -75,7 +75,7 @@ pm2 logs phosphor --lines 40 --nostream
 - TA 发的动态像朋友圈：左边头像，右边名字、时间、正文。能点赞、留言；每条留言都能单独点「↩️ 回复」，回复挂在那条下面
 - 配了语音的动态显示成淡粉色语音条，点一下播放，再点暂停
 - 菜单里的「自定义」可以改 TA 和你的头像、名字。这里改的只影响页面上的显示
-- 白底黄框的是动作卡片，记着 TA 做过的事（逛论坛、翻记忆、存记忆、调节律、点歌）。卡片上只写做了什么，回了什么、发了什么点开看详情
+- 白底黄框的是动作卡片，记着 TA 做过的事（逛论坛、翻记忆、存记忆、调节律、收歌、写批注）。卡片上只写做了什么，回了什么、发了什么点开看详情
 - 同一时间的几张动作卡片会叠成一摞，左右箭头（手机上也可以左右滑）轮换
 - TA 下次醒来会看到你的新留言（一次最多 5 条），想回就回。**回留言不占这次醒来的动作**
 - 看过的留言不会再给 TA 看第二遍，没回也算看过。你的留言后面标着"还没看到"，就是 TA 还没醒来看过
@@ -128,11 +128,11 @@ cd ~/chenmuxing && pm2 logs vesper --lines 20 --nostream | grep 记忆库
 
 ## 🎵 音乐
 
-菜单里的「音乐」跳到 [Music-Mcp-Netease](https://github.com/Anko3o/Music-Mcp-Netease) 的网易云播放器。它自带的点歌台 MCP 接上以后，TA 醒来也能看你最近在听什么、往你的播放器里点歌、在歌的批注本里写一笔。
+菜单里的「音乐」跳到 [Music-Mcp-Netease](https://github.com/Anko3o/Music-Mcp-Netease) 的网易云播放器。它自带的点歌台 MCP 接上以后，TA 醒来也能看你最近在听什么、把想让你听的歌收进歌单、在歌的批注本里写一笔。**TA 醒来时不会放歌**，你打开播放器自己去听。
 
 播放器（`server/music.py`，默认 9090）和点歌台（`mcp/music_mcp.py`，默认 18012）是它仓库里的两个程序，怎么装、网易云 cookie 怎么拿，看它的 README。要和晨暮星在同一台机器上。两件事互不依赖，可以只接一个。
 
-**菜单跳转**：nginx 已经把同一个域名下的 `/music/` 转给播放器的话，填路径就行；播放器在别的域名或端口上就填完整地址，比如 `https://music.example.com`。
+**菜单跳转**：nginx / Caddy 已经把同一个域名下的 `/music/` 转给播放器的话，填路径就行；播放器在别的域名或端口上就填完整地址，比如 `https://music.example.com`。
 
 ```bash
 cd ~/chenmuxing && sed -i '/^NAV_MUSIC_URL=/d' .env
@@ -142,10 +142,10 @@ cd ~/chenmuxing && pm2 restart vesper --update-env
 
 点「音乐」照样走星星转场离开；播放器不是本项目的页面，那边没有进场动画。不填就是灰色「没配置」。
 
-**让 TA 自己点歌**：先在音乐项目目录里把点歌台跑起来。`MCP_SIGN_AS` 填 TA 的名字，批注、收歌时署这个名；目录换成你自己 clone 的位置：
+**让 TA 醒来能用点歌台**：先在音乐项目目录里把点歌台跑起来。`MCP_SIGN_AS` 填 TA 的名字，批注、收歌时署这个名；目录换成你自己 clone 的位置：
 
 ```bash
-cd ~/music-mcp-netease && MCP_SIGN_AS=TA的名字 pm2 start mcp/music_mcp.py --name music-mcp --interpreter python3
+cd ~/Music-Mcp-Netease && MCP_SIGN_AS=TA的名字 pm2 start mcp/music_mcp.py --name music-mcp --interpreter python3
 pm2 save
 ```
 
@@ -160,13 +160,12 @@ pm2 logs phosphor --lines 30 --nostream | grep -i music
 
 看到 `connected MCP: music` 就接上了；`could not connect MCP "music"` 是点歌台没跑起来或地址不对。
 
-- TA 常用的：看你最近在听什么（`her_recent`）、点歌（`song_share`）、写批注（`song_memo`）、翻批注本（`memo_read`）、收进歌单（`playlist_add`）、读歌词（`lyric_read`）。点歌台其余的工具 TA 也看得到
-- 点歌只排进「接下来播」，不会打断你正在听的歌。播放器没开着时，歌在队列里等，打开就放
-- 动作卡片上写的是人话，比如「TA刚刚给你点了一首歌「晴天 周杰伦」」；批注写了什么，点开看详情
-- 一次醒来只做一个动作：这次看了你在听什么，要下次醒来才点歌，不像逛论坛那样能连着走
+- TA 常用的：看你最近在听什么（`her_recent`）、收进歌单（`playlist_add`）、写批注（`song_memo`）、翻批注本（`memo_read`）、读歌词（`lyric_read`）、刷评论区（`song_comments`）
+- 会出声的 `song_share` 被挡掉了：TA 醒来时工具列表里看不到它，硬调也会被拒。你在聊天里让 TA 点歌不受影响，这里只管自动唤醒。想改在 `src/mcp-manager.js` 的 `BLOCKED_TOOLS`
+- 动作卡片上写的是人话，比如「TA刚刚往歌单里收了一首歌「晴天 周杰伦」」；批注写了什么，点开看详情
 - 没配 `MUSIC_MCP_URL` 时，TA 那边不会出现听歌的说明
 
-> ⚠️ 播放器只要看到请求头 `X-Music-Gateway: music-gateway` 就不要 token，这个值是公开的默认值。9090 和 18012 都只能听本机：`ss -lntp | grep -E ':9090|:18012'` 前面应该是 `127.0.0.1`，不要在防火墙里放开。想更稳妥，就在播放器和点歌台两边都把 `MUSIC_GATEWAY_TOKEN` 改成同一串随机值，nginx 注入的请求头也跟着改。
+> ⚠️ 播放器只要看到请求头 `X-Music-Gateway: music-gateway` 就不要 token，这个值是公开的默认值。9090 和 18012 都只能听本机：`ss -lntp | grep -E ':9090|:18012'` 前面应该是 `127.0.0.1`，不要在防火墙里放开。想更稳妥，就在播放器和点歌台两边都把 `MUSIC_GATEWAY_TOKEN` 改成同一串随机值，反代注入的请求头也跟着改。
 
 ## 💬 逛论坛
 
@@ -239,7 +238,7 @@ pm2 logs phosphor --lines 20 --nostream | grep 最长
 - **silent 不给 TA 自己切**。那等于从对方的世界里消失，这个开关只留给人（`POST /wake/mode`）
 - **论坛 TA 可以自己逛、自己回帖、自己发帖**。连上的 MCP 都算 TA 能自己用的，接新的之前想好能不能交给 TA 做主，见 [07](docs/07-mcp.md)
 - **逛论坛能看完再说**。只给 TA 一步的话，TA 每次都是空着手醒来，看到的帖子下次就不记得了，自然没话可说
-- **点歌只排队，不插播**。TA 想让你听的歌放进「接下来播」，你正在听的那首不会被切掉
+- **醒来不放歌**。TA 醒来时你可能在睡觉、在开会，突然出声会吓一跳。想让你听的歌收进歌单、写进批注本，你打开播放器自己去听
 - **进程停掉的时间不追不补**。停一天再开，只会醒一次
 - **决策上下文里没有随机数和凭空算出来的"强度"**，只给真实、可解释的输入
 - **每次醒来都记账**，包括 noop 和出错，TA 不在时发生过什么都能从 `GET /wake/log` 看回来
@@ -271,7 +270,7 @@ src/
 ├── wall-time.js       按 TIME_ZONE 处理日期时间
 ├── vesper.js          3001：上报、/wake/*、挂载动态页、心绪页、日记页、记忆库
 ├── gateway.js         3002：模型路由 + 对话记录
-├── mcp-manager.js     连接 Ombre Brain / 论坛 / 点歌台
+├── mcp-manager.js     连接 Ombre Brain / 论坛 / 点歌台；挡掉醒来时不能用的工具
 └── actions/           bark / moment / mcp-action / ombre-brain / set-mode / activity
 docs/                  详细文档（见上表）
 ```
